@@ -49,6 +49,9 @@ function M.entry()
 	end
 
 	os.execute(quicklook_exe_wsl .. " " .. file_path_win .. " -top")
+	os.execute(
+		[[powershell.exe -Command "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.Interaction]::AppActivate('QuickLook')"]]
+	)
 end
 
 return M
