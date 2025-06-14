@@ -23,8 +23,50 @@ local function to_win_path(wsl_path, distro)
 	return win_path
 end
 
-local get_current = ya.sync(function(_)
-	return tostring(cx.active.current.hovered.url)
+local get_current_abs_path = ya.sync(function()
+	local current_file = cx.active.current.hovered
+
+	-- 检查 current_file 是否为 nil
+	if not current_file then
+		ya.dbg("Error: cx.active.current.hovered is nil. No file is currently hovered.")
+		return nil
+	end
+
+	if current_file.cha and current_file.cha.is_link then
+		local link_target = current_file.link_to
+
+		-- 检查 link_target 是否为 nil
+		if not link_target then
+			ya.dbg(
+				"Error: Link target (current_file.link_to) is nil for hovered file: "
+					.. tostring(current_file.url or "unknown")
+			)
+			return nil
+		end
+
+		if link_target.is_absolute then
+			return tostring(link_target)
+		else
+			-- 检查 cx.active.current.cwd 是否为 nil
+			if not cx.active.current.cwd then
+				ya.dbg(
+					"Error: Current working directory (cx.active.current.cwd) is nil. Cannot resolve relative link: "
+						.. tostring(link_target)
+				)
+				return nil
+			end
+			return tostring(cx.active.current.cwd:join(link_target))
+		end
+	else
+		-- 检查 current_file.url 是否为 nil
+		if not current_file.url then
+			ya.dbg(
+				"Error: File URL (current_file.url) is nil for non-link file: " .. tostring(current_file or "unknown")
+			)
+			return nil
+		end
+		return tostring(current_file.url)
+	end
 end)
 
 -- it's necessary to use ya.sync to get sync context vars
@@ -37,7 +79,7 @@ function M.entry()
 	local cfg = get_cfg()
 	local distro = cfg.wsl_distro or "Arch"
 	local quicklook_exe_wsl = cfg.quicklook_path or "/mnt/c/Users/zion/AppData/Local/Programs/QuickLook/QuickLook.exe"
-	local file_path_wsl = get_current()
+	local file_path_wsl = get_current_abs_path()
 
 	local file_path_win = "'" .. to_win_path(file_path_wsl, distro) .. "'"
 
