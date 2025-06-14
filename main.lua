@@ -4,6 +4,38 @@ function M:setup(cfg)
 	self.cfg = cfg
 end
 
+---
+-- 解析路径为最终的、真实的绝对路径。
+-- 此函数假定脚本的当前工作目录 (CWD) 已经是正确的上下文。
+-- 它能处理任意路径（相对/绝对/含符号链接）。
+--
+-- @param path_str string        需要解析的路径。
+-- @return string|nil, string   成功则返回真实的绝对路径；失败则返回 nil 和错误信息。
+--
+local function to_abs_path(path_str)
+	-- 使用 %q 为 shell 命令安全地引用路径。
+	local safe_path = string.format("%q", path_str)
+
+	-- 命令现在非常简单，readlink 会自动使用当前进程的 CWD 来解析相对路径。
+	local command = "readlink -f " .. safe_path
+
+	local f = io.popen(command)
+	if not f then
+		return nil, "Failed to execute 'readlink' command."
+	end
+
+	local real_path = f:read("*a")
+	local success, _, exit_code = f:close()
+
+	-- 如果命令执行失败或没有返回任何内容，则解析失败。
+	if not success or exit_code ~= 0 or real_path == "" then
+		return nil, "Failed to resolve path: " .. path_str
+	end
+
+	-- 清理并返回结果。
+	return real_path:gsub("[\r\n]$", "")
+end
+
 -- Converts a WSL path to a Windows path.
 -- @param wsl_path (string) The WSL path to convert.
 -- @param distro (string) The name of the WSL distribution.
@@ -25,47 +57,11 @@ end
 
 local get_current_abs_path = ya.sync(function()
 	local current_file = cx.active.current.hovered
-
-	-- 检查 current_file 是否为 nil
-	if not current_file then
-		ya.dbg("Error: cx.active.current.hovered is nil. No file is currently hovered.")
-		return nil
-	end
-
-	if current_file.cha and current_file.cha.is_link then
-		local link_target = current_file.link_to
-
-		-- 检查 link_target 是否为 nil
-		if not link_target then
-			ya.dbg(
-				"Error: Link target (current_file.link_to) is nil for hovered file: "
-					.. tostring(current_file.url or "unknown")
-			)
-			return nil
-		end
-
-		if link_target.is_absolute then
-			return tostring(link_target)
-		else
-			-- 检查 cx.active.current.cwd 是否为 nil
-			if not cx.active.current.cwd then
-				ya.dbg(
-					"Error: Current working directory (cx.active.current.cwd) is nil. Cannot resolve relative link: "
-						.. tostring(link_target)
-				)
-				return nil
-			end
-			return tostring(cx.active.current.cwd:join(link_target))
-		end
+	if current_file.cha.is_link then
+		return to_abs_path(tostring(current_file.link_to))
 	else
-		-- 检查 current_file.url 是否为 nil
-		if not current_file.url then
-			ya.dbg(
-				"Error: File URL (current_file.url) is nil for non-link file: " .. tostring(current_file or "unknown")
-			)
-			return nil
-		end
-		return tostring(current_file.url)
+		-- to deal with a file that is not a link but a parent directory
+		return to_abs_path(tostring(current_file.url))
 	end
 end)
 
