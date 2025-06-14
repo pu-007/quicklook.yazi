@@ -1,6 +1,6 @@
 # QuickLook.yazi
 
-(WIP)Use QuickLook to preview files/dirs in yazi on WSL.
+Use QuickLook to preview files/dirs in yazi on WSL, which is useful for Videos, Images, PDFs, and other file types that QuickLook supports.
 
 ## Install
 
