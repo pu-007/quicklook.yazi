@@ -58,9 +58,8 @@ function M.entry()
 	local quicklook_exe_wsl = cfg.quicklook_path or "/mnt/c/Users/zion/AppData/Local/Programs/QuickLook/QuickLook.exe"
 	local file_path_wsl = get_current_abs_path()
 
-	-- 注意：使用 Yazi 的 Command API 时，不需要像 os.execute 那样手动在外层加单引号包裹路径
-	-- 因为底层的系统调用会自动处理带空格的参数
-	local file_path_win = to_win_path(file_path_wsl, distro)
+	-- 恢复使用单引号包裹，因为我们继续使用 os.execute (底层是 /bin/sh)
+	local file_path_win = "'" .. to_win_path(file_path_wsl, distro) .. "'"
 
 	if cfg.debug then
 		ya.dbg("QuickLook Plugin:")
@@ -69,7 +68,7 @@ function M.entry()
 		ya.dbg("==>QuickLook WSL Path: " .. quicklook_exe_wsl)
 	end
 
-	-- 1. 将脚本固定写入 Linux 的 /tmp 目录，避免在当前工作目录制造垃圾文件
+	-- 1. 将脚本固定写入 Linux 的 /tmp 目录，每次直接覆盖，不产生垃圾
 	local tmp_ps_wsl_path = "/tmp/yazi_quicklook_activate.ps1"
 	local f = io.open(tmp_ps_wsl_path, "w")
 	if f then
@@ -111,16 +110,17 @@ while ($sw.ElapsedMilliseconds -lt 3000) {
 		f:close()
 	end
 
-	-- 2. 将 /tmp 的路径转为 Windows 能够识别的 \\wsl.localhost\Arch\tmp\... 路径
-	local tmp_ps_win_path = to_win_path(tmp_ps_wsl_path, distro)
+	-- 2. 将 /tmp 的路径转为 Windows 能够识别的 \\wsl.localhost\... 路径，同样加上单引号包裹
+	local tmp_ps_win_path = "'" .. to_win_path(tmp_ps_wsl_path, distro) .. "'"
 
-	-- 3. 使用 Yazi 原生的 Command API 异步启动 PowerShell (无需加 &)
-	Command("pwsh.exe")
-			:args({ "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", tmp_ps_win_path })
-			:spawn()
+	-- 3. 使用 os.execute 和末尾的 `&` 符号实现后台异步运行
+	-- 加上 -ExecutionPolicy Bypass 增加兼容性，防止 Windows 策略拦截共享目录下的脚本
+	local ps_cmd = "pwsh.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File " .. tmp_ps_win_path .. " &"
+	os.execute(ps_cmd)
 
-	-- 4. 使用 Yazi 原生的 Command API 异步启动 QuickLook
-	Command(quicklook_exe_wsl):args({ file_path_win, "-top" }):spawn()
+	-- 4. 启动 QuickLook。建议这里末尾也加上 `&` 防止被任何意外情况阻塞 Yazi 主界面
+	local ql_cmd = quicklook_exe_wsl .. " " .. file_path_win .. " -top &"
+	os.execute(ql_cmd)
 end
 
 return M
