@@ -68,7 +68,7 @@ function M.entry()
 		ya.dbg("==>QuickLook WSL Path: " .. quicklook_exe_wsl)
 	end
 
-	-- 1. 将脚本固定写入 Linux 的 /tmp 目录
+	-- 1. 将脚本临时写入 /tmp
 	local tmp_ps_wsl_path = "/tmp/yazi_quicklook_activate.ps1"
 	local f = io.open(tmp_ps_wsl_path, "w")
 	if f then
@@ -89,7 +89,6 @@ public class Win32 {
 }
 "@
 $sw = [Diagnostics.Stopwatch]::StartNew()
-# 稍微增加一点超时时间到 5000 毫秒，提高稳定性
 while ($sw.ElapsedMilliseconds -lt 5000) {
     $found = $false
     [Win32]::EnumWindows({
@@ -111,9 +110,12 @@ while ($sw.ElapsedMilliseconds -lt 5000) {
 		f:close()
 	end
 
-	-- 2. 核心魔法：使用 `<` 标准输入重定向！
-	-- 让 Linux 读取 /tmp 下的文件，作为内容直接塞进 pwsh.exe 的嘴里，彻底避免了 Windows UNC 路径的安全拦截
-	local ps_cmd = "pwsh.exe -WindowStyle Hidden -Command - < '" .. tmp_ps_wsl_path .. "' &"
+	-- 2. 终极魔法：使用 Linux 自带工具转换为 Base64，彻底无视报错！
+	-- 先用 iconv 将 utf-8 转换为 utf-16le，再 base64 编码，去掉换行符。
+	-- 最后使用 pwsh.exe -EncodedCommand 直接执行编码后的字符串。
+	local ps_cmd = [[B64=$(iconv -f UTF-8 -t UTF-16LE ']]
+		.. tmp_ps_wsl_path
+		.. [[' | base64 | tr -d '\n\r') && pwsh.exe -WindowStyle Hidden -NoProfile -NonInteractive -EncodedCommand "$B64" &]]
 	os.execute(ps_cmd)
 
 	-- 3. 启动 QuickLook
