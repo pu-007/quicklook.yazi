@@ -58,7 +58,7 @@ function M.entry()
 	local quicklook_exe_wsl = cfg.quicklook_path or "/mnt/c/Users/zion/AppData/Local/Programs/QuickLook/QuickLook.exe"
 	local file_path_wsl = get_current_abs_path()
 
-	-- 恢复使用单引号包裹，因为我们继续使用 os.execute (底层是 /bin/sh)
+	-- 给文件路径加单引号，防止包含空格
 	local file_path_win = "'" .. to_win_path(file_path_wsl, distro) .. "'"
 
 	if cfg.debug then
@@ -68,7 +68,7 @@ function M.entry()
 		ya.dbg("==>QuickLook WSL Path: " .. quicklook_exe_wsl)
 	end
 
-	-- 1. 将脚本固定写入 Linux 的 /tmp 目录，每次直接覆盖，不产生垃圾
+	-- 1. 将脚本固定写入 Linux 的 /tmp 目录
 	local tmp_ps_wsl_path = "/tmp/yazi_quicklook_activate.ps1"
 	local f = io.open(tmp_ps_wsl_path, "w")
 	if f then
@@ -89,7 +89,8 @@ public class Win32 {
 }
 "@
 $sw = [Diagnostics.Stopwatch]::StartNew()
-while ($sw.ElapsedMilliseconds -lt 3000) {
+# 稍微增加一点超时时间到 5000 毫秒，提高稳定性
+while ($sw.ElapsedMilliseconds -lt 5000) {
     $found = $false
     [Win32]::EnumWindows({
         param($hWnd, $lParam)
@@ -110,15 +111,12 @@ while ($sw.ElapsedMilliseconds -lt 3000) {
 		f:close()
 	end
 
-	-- 2. 将 /tmp 的路径转为 Windows 能够识别的 \\wsl.localhost\... 路径，同样加上单引号包裹
-	local tmp_ps_win_path = "'" .. to_win_path(tmp_ps_wsl_path, distro) .. "'"
-
-	-- 3. 使用 os.execute 和末尾的 `&` 符号实现后台异步运行
-	-- 加上 -ExecutionPolicy Bypass 增加兼容性，防止 Windows 策略拦截共享目录下的脚本
-	local ps_cmd = "pwsh.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File " .. tmp_ps_win_path .. " &"
+	-- 2. 核心魔法：使用 `<` 标准输入重定向！
+	-- 让 Linux 读取 /tmp 下的文件，作为内容直接塞进 pwsh.exe 的嘴里，彻底避免了 Windows UNC 路径的安全拦截
+	local ps_cmd = "pwsh.exe -WindowStyle Hidden -Command - < '" .. tmp_ps_wsl_path .. "' &"
 	os.execute(ps_cmd)
 
-	-- 4. 启动 QuickLook。建议这里末尾也加上 `&` 防止被任何意外情况阻塞 Yazi 主界面
+	-- 3. 启动 QuickLook
 	local ql_cmd = quicklook_exe_wsl .. " " .. file_path_win .. " -top &"
 	os.execute(ql_cmd)
 end
