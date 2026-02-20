@@ -6,17 +6,8 @@ end
 
 ---
 -- 解析路径为最终的、真实的绝对路径。
--- 此函数假定脚本的当前工作目录 (CWD) 已经是正确的上下文。
--- 它能处理任意路径（相对/绝对/含符号链接）。
---
--- @param path_str string        需要解析的路径。
--- @return string|nil, string   成功则返回真实的绝对路径；失败则返回 nil 和错误信息。
---
 local function to_abs_path(path_str)
-	-- 使用 %q 为 shell 命令安全地引用路径。
 	local safe_path = string.format("%q", path_str)
-
-	-- 命令现在非常简单，readlink 会自动使用当前进程的 CWD 来解析相对路径。
 	local command = "readlink -f " .. safe_path
 
 	local f = io.popen(command)
@@ -27,28 +18,21 @@ local function to_abs_path(path_str)
 	local real_path = f:read("*a")
 	local success, _, exit_code = f:close()
 
-	-- 如果命令执行失败或没有返回任何内容，则解析失败。
 	if not success or exit_code ~= 0 or real_path == "" then
 		return nil, "Failed to resolve path: " .. path_str
 	end
 
-	-- 清理并返回结果。
 	return real_path:gsub("[\r\n]$", "")
 end
 
 -- Converts a WSL path to a Windows path.
--- @param wsl_path (string) The WSL path to convert.
--- @param distro (string) The name of the WSL distribution.
--- @return (string) The converted Windows path.
 local function to_win_path(wsl_path, distro)
 	local win_path
-	-- Check if it's a mounted Windows path (e.g., /mnt/c/...)
 	if string.sub(wsl_path, 1, 5) == "/mnt/" then
 		local drive = string.sub(wsl_path, 6, 6)
 		win_path = string.upper(drive) .. ":" .. string.sub(wsl_path, 7)
 		win_path = string.gsub(win_path, "/", "\\")
 	else
-		-- Assume it's a WSL-native path (e.g., /home/user/...)
 		win_path = "\\\\wsl.localhost\\" .. distro .. wsl_path
 		win_path = string.gsub(win_path, "/", "\\")
 	end
@@ -60,13 +44,10 @@ local get_current_abs_path = ya.sync(function()
 	if current_file.cha.is_link then
 		return to_abs_path(tostring(current_file.link_to))
 	else
-		-- to deal with a file that is not a link but a parent directory
 		return to_abs_path(tostring(current_file.url))
 	end
 end)
 
--- it's necessary to use ya.sync to get sync context vars
--- bacause the plugin is async for default
 local get_cfg = ya.sync(function(_)
 	return M.cfg
 end)
@@ -77,7 +58,9 @@ function M.entry()
 	local quicklook_exe_wsl = cfg.quicklook_path or "/mnt/c/Users/zion/AppData/Local/Programs/QuickLook/QuickLook.exe"
 	local file_path_wsl = get_current_abs_path()
 
-	local file_path_win = "'" .. to_win_path(file_path_wsl, distro) .. "'"
+	-- 注意：使用 Yazi 的 Command API 时，不需要像 os.execute 那样手动在外层加单引号包裹路径
+	-- 因为底层的系统调用会自动处理带空格的参数
+	local file_path_win = to_win_path(file_path_wsl, distro)
 
 	if cfg.debug then
 		ya.dbg("QuickLook Plugin:")
@@ -86,11 +69,11 @@ function M.entry()
 		ya.dbg("==>QuickLook WSL Path: " .. quicklook_exe_wsl)
 	end
 
-	-- 用 PowerShell 直接调用 Windows API 激活窗口，注意设置执行策略
-	-- Set-ExecutionPolicy -ExecutionPolicy Bypass
-	local tmp_ps_file = "activate_quicklook.ps1"
-	local f = io.open(tmp_ps_file, "w")
-	f:write([[
+	-- 1. 将脚本固定写入 Linux 的 /tmp 目录，避免在当前工作目录制造垃圾文件
+	local tmp_ps_wsl_path = "/tmp/yazi_quicklook_activate.ps1"
+	local f = io.open(tmp_ps_wsl_path, "w")
+	if f then
+		f:write([[
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -116,21 +99,28 @@ while ($sw.ElapsedMilliseconds -lt 3000) {
         if ($sb.ToString().StartsWith("QuickLook - ")) {
             [Win32]::SetForegroundWindow($hWnd) | Out-Null
             $script:found = $true
-            return $false # 停止遍历
+            return $false
         }
-        return $true # 继续遍历
+        return $true
     }, [IntPtr]::Zero) | Out-Null
 
     if ($found) { break }
     Start-Sleep -Milliseconds 50
 }
 ]])
-	f:close()
-	-- 后台异步运行 PowerShell 脚本（隐藏窗口）
-	os.execute("pwsh.exe -WindowStyle Hidden -File " .. tmp_ps_file .. " &")
+		f:close()
+	end
 
-	-- 启动 QuickLook
-	os.execute(quicklook_exe_wsl .. " " .. file_path_win .. " -top")
+	-- 2. 将 /tmp 的路径转为 Windows 能够识别的 \\wsl.localhost\Arch\tmp\... 路径
+	local tmp_ps_win_path = to_win_path(tmp_ps_wsl_path, distro)
+
+	-- 3. 使用 Yazi 原生的 Command API 异步启动 PowerShell (无需加 &)
+	Command("pwsh.exe")
+			:args({ "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", tmp_ps_win_path })
+			:spawn()
+
+	-- 4. 使用 Yazi 原生的 Command API 异步启动 QuickLook
+	Command(quicklook_exe_wsl):args({ file_path_win, "-top" }):spawn()
 end
 
 return M
