@@ -88,7 +88,11 @@ function M.entry()
 
 	-- 用 PowerShell 直接调用 Windows API 激活窗口，注意设置执行策略
 	-- Set-ExecutionPolicy -ExecutionPolicy Bypass
-	os.execute("pwsh.exe -NoProfile -WindowStyle Hidden -File ./assets/activate_quicklook.ps1 &")
+	os.execute(
+		"pwsh.exe -NoProfile -WindowStyle Hidden -File "
+			.. os.getenv("HOME")
+			.. "/.config/yazi/plugins/quicklook.yazi/assets/activate_quicklook.ps1 &"
+	)
 
 	-- 启动 QuickLook
 	os.execute(quicklook_exe_wsl .. " " .. file_path_win .. " -top")
